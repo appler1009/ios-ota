@@ -1,4 +1,5 @@
 import AppKit
+import CryptoKit
 import Foundation
 import Observation
 import UserNotifications
@@ -29,8 +30,8 @@ struct Build: Codable, Identifiable, Hashable {
 
 /// An app and its builds, newest first.
 struct PublishedApp: Identifiable {
-    var id: String { bundle }
-    let bundle: String
+    var id: String { key }
+    let key: String            // its folder and address (see Store.key)
     let builds: [Build]
     var newest: Build { builds[0] }
 }
@@ -54,7 +55,13 @@ struct PublishedApp: Identifiable {
     }
 
     var pageURL: URL? { host.map { URL(string: "https://\($0):\(Self.tailnetPort)/")! } }
-    func pageURL(_ app: PublishedApp) -> URL? { host.map { URL(string: "https://\($0):\(Self.tailnetPort)/\(app.bundle)/")! } }
+    func pageURL(_ app: PublishedApp) -> URL? { host.map { URL(string: "https://\($0):\(Self.tailnetPort)/\(app.key)/")! } }
+
+    /// An app's folder and address: the first 12 hex digits of the SHA-256 of its bundle id, as `ios-ota publish` names it,
+    /// so the bundle id is not in any address.
+    nonisolated static func key(_ bundle: String) -> String {
+        SHA256.hash(data: Data(bundle.utf8)).map { String(format: "%02x", $0) }.joined().prefix(12).description
+    }
 
     private let server = Server(port: Store.port, root: Store.root)
     @ObservationIgnored private var watcher: DispatchSourceFileSystemObject?
@@ -81,13 +88,13 @@ struct PublishedApp: Identifiable {
     func scan() {
         let fm = FileManager.default
         var found: [PublishedApp] = []
-        for bundle in (try? fm.contentsOfDirectory(atPath: Self.root.path)) ?? [] {
-            let folder = Self.root.appendingPathComponent(bundle)
+        for key in (try? fm.contentsOfDirectory(atPath: Self.root.path)) ?? [] {
+            let folder = Self.root.appendingPathComponent(key)
             let builds = ((try? fm.contentsOfDirectory(atPath: folder.path)) ?? []).compactMap { id -> Build? in
                 guard let data = try? Data(contentsOf: folder.appendingPathComponent(id).appendingPathComponent("build.json")) else { return nil }
                 return try? JSONDecoder().decode(Build.self, from: data)
             }
-            if !builds.isEmpty { found.append(PublishedApp(bundle: bundle, builds: builds.sorted { $0.time > $1.time })) }
+            if !builds.isEmpty { found.append(PublishedApp(key: key, builds: builds.sorted { $0.time > $1.time })) }
         }
         found.sort { $0.newest.time > $1.newest.time }
         let ids = Set(found.flatMap { $0.builds.map(\.id) })
@@ -120,14 +127,14 @@ struct PublishedApp: Identifiable {
 
     /// Deletes a build, then rewrites the pages so they offer what is left.
     func delete(_ b: Build) {
-        try? FileManager.default.removeItem(at: Self.root.appendingPathComponent(b.bundle).appendingPathComponent(b.id))
+        try? FileManager.default.removeItem(at: folder(b))
         if let script = Bundle.main.url(forResource: "pages", withExtension: "py") {
             _ = try? run("/usr/bin/python3", [script.path, Self.root.path])
         }
         scan()
     }
 
-    func folder(_ b: Build) -> URL { Self.root.appendingPathComponent(b.bundle).appendingPathComponent(b.id) }
+    func folder(_ b: Build) -> URL { Self.root.appendingPathComponent(Self.key(b.bundle)).appendingPathComponent(b.id) }
 
     /// The app's icon at menu size, from its newest build that has one.
     func icon(_ app: PublishedApp) -> NSImage? {

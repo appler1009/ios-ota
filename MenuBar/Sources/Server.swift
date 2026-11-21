@@ -67,7 +67,8 @@ final class Server: @unchecked Sendable {
         let parts = head.split(separator: "\r\n").first?.split(separator: " ") ?? []
         guard parts.count >= 2, parts[0] == "GET" || parts[0] == "HEAD" else { return send(c, 405, "text/plain", Data("Method not allowed".utf8)) }
         let headOnly = parts[0] == "HEAD"
-        guard let file = resolve(String(parts[1])) else { return send(c, 404, "text/plain", Data("Not found".utf8)) }
+        // build.json is for the menu bar app only: it names the bundle id and the project's folder on this Mac.
+        guard let file = resolve(String(parts[1])), file.lastPathComponent != "build.json" else { return send(c, 404, "text/plain", Data("Not found".utf8)) }
         guard let body = try? Data(contentsOf: file, options: .alwaysMapped) else { return send(c, 404, "text/plain", Data("Not found".utf8)) }
         send(c, 200, Self.type(of: file), body, headOnly: headOnly)
     }

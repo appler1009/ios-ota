@@ -1,5 +1,5 @@
 # Writes the install pages of ios-ota from the build.json of every published build, so the pages always match what is on
-# disk: one page per app (/<bundle id>/, its newest build) and one listing every app. Run by `ios-ota publish` after a
+# disk: one page per app (/<app key>/, its newest build) and one listing every app. Run by `ios-ota publish` after a
 # build is added, and by the menu bar app after one is deleted.
 #
 #     python3 pages.py <builds folder>
@@ -38,7 +38,7 @@ HEAD = '<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="v
 
 
 def builds(root):
-    """Every app's builds, newest first: {bundle: [build, ...]}."""
+    """Every app's builds, newest first: {app key (its folder): [build, ...]}."""
     out = {}
     for bundle in sorted(os.listdir(root)):
         folder = os.path.join(root, bundle)
