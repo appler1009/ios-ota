@@ -65,10 +65,12 @@ private struct MenuContent: View {
             Menu {
                 appItems(app)
             } label: {
+                // Two lines of text: macOS shows the second under the first, smaller and grey (a menu item's subtitle).
                 if let icon = store.icon(app) {
-                    Label { Text("\(app.newest.title)  \(app.newest.versionText)") } icon: { Image(nsImage: icon) }
+                    Label { Text(app.newest.title); Text(app.newest.versionText) } icon: { Image(nsImage: icon) }
                 } else {
-                    Text("\(app.newest.title)  \(app.newest.versionText)")
+                    Text(app.newest.title)
+                    Text(app.newest.versionText)
                 }
             }
         }
@@ -96,13 +98,16 @@ private struct MenuContent: View {
         Divider()
         Menu("All Builds (\(app.builds.count))") {
             ForEach(app.builds) { build in
-                Menu("\(build.versionText)  \(build.whenText)") {
+                Menu {
                     if !build.commit.isEmpty { Text(build.commit) }
                     Button("Copy Direct Install Link") { copy(build.installLink) }
                     Button("Show Direct Install Link as a QR Code") { show(build.installLink) }
                     Button("Show in Finder") { NSWorkspace.shared.activateFileViewerSelecting([store.folder(build).appendingPathComponent("App.ipa")]) }
                     Divider()
                     Button("Delete This Build") { store.delete(build) }
+                } label: {
+                    Text(build.versionText)
+                    Text(build.whenText)
                 }
             }
         }
