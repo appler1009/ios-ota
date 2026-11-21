@@ -35,6 +35,12 @@ STYLE = """<style>
   .big { width: 96px; height: 96px; border-radius: 21.5px; display: block; margin: 0 auto 12px; }
   .center { text-align: center; }
   a.back { color: var(--accent); text-decoration: none; font-size: 17px; align-self: flex-start; padding: 4px 0; }
+  .details { padding: 0 20px; }
+  .details table { width: 100%; border-collapse: collapse; font-size: 16px; }
+  .details td { padding: 12px 0; border-bottom: 0.5px solid rgba(128, 128, 128, 0.3); vertical-align: top; }
+  .details tr:last-child td { border-bottom: none; }
+  .details td.k { color: var(--dim); padding-right: 16px; white-space: nowrap; }
+  .details td.v { text-align: right; word-break: break-word; }
 </style>"""
 
 HEAD = '<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">'
@@ -77,31 +83,22 @@ def version(b):
     return f"<p>Version {html.escape(b.get('version', '?'))} ({html.escape(str(b.get('build', '?')))})</p>"
 
 
-def line(b):
-    text = f"Version {html.escape(b.get('version', '?'))} ({html.escape(str(b.get('build', '?')))}) &middot; built {html.escape(when(b.get('time', '')))}"
-    commit = ""
-    if b.get("commit"):
-        # The commit's date, when the build had no uncommitted changes (then `changed` is that date, not the build time).
-        dated = b.get("changed") and "uncommitted" not in b["commit"] and b["changed"] != b.get("time")
-        commit = f"<p>{html.escape(b['commit'])}{' &middot; committed ' + html.escape(when(b['changed'])) if dated else ''}</p>"
-    return f"<p>{text}</p>{commit}"
-
-
-def icon(b, cls, prefix=""):
-    """The <img> of a build's icon, or nothing. `prefix` is the path from the page to the app's folder."""
-    if not b.get("icon"):
-        return ""
-    src = prefix + urllib.parse.quote(b["id"]) + "/" + urllib.parse.quote(b["icon"])
-    return f'<img class="{cls}" src="{src}" alt="">'
-
-
-def size(b):
-    """The download size, as the iPhone counts it (decimal units: 6.6 MB)."""
-    n = float(b.get("size") or 0)
-    for unit in ("bytes", "KB", "MB", "GB"):
-        if n < 1000 or unit == "GB":
-            return f"{n:.0f} {unit}" if unit in ("bytes", "KB") else f"{n:.1f} {unit}"
-        n /= 1000
+def details(b):
+    """The rows of an app page's details table: (label, value)."""
+    rows = [("Version", f"{b.get('version', '?')} ({b.get('build', '?')})"), ("Built", when(b.get("time", "")))]
+    c = b.get("commit", "")
+    if " @ " in c:
+        branch, rest = c.split(" @ ", 1)
+        sha, _, note = rest.partition(", ")
+        rows += [("Branch", branch), ("Commit", sha)]
+        if note:
+            rows.append(("Changes", "Uncommitted, included"))
+        elif b.get("changed") and b["changed"] != b.get("time"):
+            rows.append(("Committed", when(b["changed"])))
+    elif c:
+        rows.append(("From", c))          # an app file published with --ipa
+    rows.append(("Download size", size(b)))
+    return rows
 
 
 def write(path, text):
@@ -117,11 +114,11 @@ def main(root):
         b = list_[0]
         title = html.escape(b.get("title", bundle))
         link = "itms-services://?action=download-manifest&amp;url=" + urllib.parse.quote(b["manifest"], safe="")
+        rows = "".join(f'<tr><td class="k">{html.escape(k)}</td><td class="v">{html.escape(v)}</td></tr>' for k, v in details(b))
         write(os.path.join(root, bundle, "index.html"),
-              f"{HEAD}<title>Install {title}</title>{STYLE}</head><body><main><a class=\"back\" href=\"../\">\u2039 All Apps</a><div class=\"card center\">{icon(b, 'big')}<h1>{title}</h1>{line(b)}"
-              f"<p>Download size: {size(b)}</p>"
-              f"<a class=\"install\" href=\"{link}\">Install</a></div>"
-              f"<p>After tapping Install, go to the Home Screen to watch it install.</p></main></body></html>")
+              f"{HEAD}<title>Install {title}</title>{STYLE}</head><body><main><a class=\"back\" href=\"../\">\u2039 All Apps</a>"
+              f"<div class=\"card center\">{icon(b, 'big')}<h1>{title}</h1><a class=\"install\" href=\"{link}\">Install</a></div>"
+              f"<div class=\"card details\"><table>{rows}</table></div></main></body></html>")
     # Apps whose builds are all gone lose their page.
     for bundle in os.listdir(root):
         page = os.path.join(root, bundle, "index.html")
