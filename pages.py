@@ -32,6 +32,7 @@ STYLE = """<style>
   .icon { width: 60px; height: 60px; border-radius: 13.5px; flex: none; }
   .big { width: 96px; height: 96px; border-radius: 21.5px; display: block; margin: 0 auto 12px; }
   .center { text-align: center; }
+  a.back { color: var(--accent); text-decoration: none; font-size: 17px; align-self: flex-start; padding: 4px 0; }
 </style>"""
 
 HEAD = '<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">'
@@ -99,7 +100,7 @@ def main(root):
         title = html.escape(b.get("title", bundle))
         link = "itms-services://?action=download-manifest&amp;url=" + urllib.parse.quote(b["manifest"], safe="")
         write(os.path.join(root, bundle, "index.html"),
-              f"{HEAD}<title>Install {title}</title>{STYLE}</head><body><main><div class=\"card center\">{icon(b, 'big')}<h1>{title}</h1>{line(b)}"
+              f"{HEAD}<title>Install {title}</title>{STYLE}</head><body><main><a class=\"back\" href=\"../\">\u2039 All Apps</a><div class=\"card center\">{icon(b, 'big')}<h1>{title}</h1>{line(b)}"
               f"<p>Download size: {size(b)}</p>"
               f"<a class=\"install\" href=\"{link}\">Install</a></div>"
               f"<p>After tapping Install, go to the Home Screen to watch it install.</p></main></body></html>")
