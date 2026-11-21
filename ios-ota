@@ -1,0 +1,240 @@
+#!/bin/bash
+# Over-the-air installs of your own iOS apps on your own iPhone, through Tailscale. One server for every project.
+#
+#   ios-ota publish [--scheme S] [--project P.xcodeproj | --workspace W.xcworkspace] [-- BUILD_SETTING=value ...]
+#       From a project folder: archive it, export it signed for development, and publish it. Prints the install page.
+#       The app's name, bundle id and version come from the build; the signing team from Xcode's build settings.
+#       Anything after -- is passed to xcodebuild (say CURRENT_PROJECT_VERSION=123).
+#   ios-ota setup        Install the server as a login item and share it on the tailnet (publish does this when needed).
+#   ios-ota status       Is the server running and shared, and which apps are published.
+#   ios-ota uninstall    Remove the login item and the tailnet share (published builds stay on disk).
+#
+# On the iPhone, with Tailscale on: https://<this Mac>.<tailnet>.ts.net:8444/ lists every app; each app has its own page
+# (/<bundle id>/) that always offers its newest build. Tap Install. Only devices registered to the signing team can install.
+#
+# How it works: builds go in ~/Library/Application Support/iOS-OTA/<bundle id>/<random id>/ (App.ipa and manifest.plist),
+# with an index.html per app and one listing them all; the newest five builds of each app are kept. serve.py serves that
+# folder on 127.0.0.1:8445 (the Mac App Store Tailscale cannot serve a folder itself), kept running by the login item
+# com.appler.ios-ota, and `tailscale serve` passes it on over HTTPS at port 8444, to the tailnet only.
+
+set -euo pipefail
+
+PORT=8444                    # on the tailnet (HTTPS)
+LOCAL=8445                   # serve.py, behind it
+LABEL=com.appler.ios-ota
+ROOT="$HOME/Library/Application Support/iOS-OTA"
+KEEP=5
+HERE=$(cd "$(dirname "$(readlink -f "$0")")" && pwd)
+PLIST="$HOME/Library/LaunchAgents/$LABEL.plist"
+TS=$(command -v tailscale || echo /Applications/Tailscale.app/Contents/MacOS/Tailscale)
+
+die() { echo "ios-ota: $*" >&2; exit 1; }
+host() { "$TS" status --json | python3 -c 'import json,sys; print(json.load(sys.stdin)["Self"]["DNSName"].rstrip("."))'; }
+shared() { "$TS" serve status --json 2>/dev/null | python3 -c "import json,sys; sys.exit(0 if '$PORT' in json.load(sys.stdin).get('TCP',{}) else 1)"; }
+listening() { lsof -nP -iTCP:"$LOCAL" -sTCP:LISTEN >/dev/null 2>&1; }
+esc() { python3 -c 'import html,sys; print(html.escape(sys.argv[1]))' "$1"; }
+
+# MARK: setup
+
+setup() {
+  mkdir -p "$ROOT" "$HOME/Library/LaunchAgents" "$HOME/.local/bin"
+  cat > "$PLIST" <<PLIST
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0"><dict>
+  <key>Label</key><string>$LABEL</string>
+  <key>ProgramArguments</key><array>
+    <string>/usr/bin/python3</string><string>$HERE/serve.py</string><string>$LOCAL</string><string>$ROOT</string>
+  </array>
+  <key>RunAtLoad</key><true/>
+  <key>KeepAlive</key><true/>
+</dict></plist>
+PLIST
+  launchctl bootout "gui/$(id -u)/$LABEL" 2>/dev/null || true
+  if listening; then die "port $LOCAL is in use by something else (lsof -nP -iTCP:$LOCAL)"; fi
+  launchctl bootstrap "gui/$(id -u)" "$PLIST"
+  for _ in 1 2 3 4 5 6 7 8 9 10; do listening && break; sleep 0.3; done
+  listening || die "the server did not start (launchctl print gui/$(id -u)/$LABEL)"
+  shared || "$TS" serve --bg --https="$PORT" "http://127.0.0.1:$LOCAL" >/dev/null
+  ln -sf "$HERE/ios-ota" "$HOME/.local/bin/ios-ota"
+  echo "Server running and shared: https://$(host):$PORT/"
+}
+
+uninstall() {
+  launchctl bootout "gui/$(id -u)/$LABEL" 2>/dev/null || true
+  rm -f "$PLIST"
+  shared && "$TS" serve --https="$PORT" off >/dev/null || true
+  echo "Removed the login item and the tailnet share. Builds are still in $ROOT."
+}
+
+status() {
+  if listening; then echo "server: running on 127.0.0.1:$LOCAL"; else echo "server: not running (ios-ota setup)"; fi
+  if shared; then echo "shared: https://$(host):$PORT/"; else echo "shared: no (ios-ota setup)"; fi
+  for d in "$ROOT"/*/; do [ -f "$d/app.txt" ] && echo "  $(cat "$d/app.txt")"; done
+  return 0
+}
+
+# MARK: pages
+
+page_style() {
+  cat <<'CSS'
+<style>
+  :root { color-scheme: light dark; --bg: #f2f2f7; --card: #fff; --text: #1c1c1e; --dim: #6e6e73; --accent: #0a84ff; }
+  @media (prefers-color-scheme: dark) { :root { --bg: #000; --card: #1c1c1e; --text: #f2f2f7; --dim: #98989d; } }
+  body { margin: 0; background: var(--bg); color: var(--text); font: 17px -apple-system, system-ui, sans-serif; }
+  main { padding: 40px 16px; display: flex; flex-direction: column; gap: 14px; }
+  .card { background: var(--card); border-radius: 18px; padding: 20px; }
+  h1 { font-size: 24px; margin: 0 0 6px; }
+  h2 { font-size: 19px; margin: 0 0 4px; }
+  p { margin: 3px 0; color: var(--dim); font-size: 15px; }
+  a.install { display: block; margin-top: 16px; padding: 14px; border-radius: 14px; background: var(--accent);
+              color: #fff; font-weight: 600; text-decoration: none; font-size: 18px; text-align: center; }
+  a.app { color: inherit; text-decoration: none; display: block; }
+</style>
+CSS
+}
+
+# The page listing every published app, newest first.
+write_root_index() {
+  local cards=""
+  while IFS= read -r f; do cards+=$(cat "$f"); done < <(ls -t "$ROOT"/*/card.html 2>/dev/null)   # paths have spaces
+  cat > "$ROOT/index.html" <<HTML
+<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Install apps</title>$(page_style)</head>
+<body><main><h1>Apps</h1>${cards:-<p>Nothing published yet.</p>}</main></body></html>
+HTML
+}
+
+# MARK: publish
+
+publish() {
+  local scheme="" project="" workspace="" extra=()
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --scheme) scheme="$2"; shift 2 ;;
+      --project) project="$2"; shift 2 ;;
+      --workspace) workspace="$2"; shift 2 ;;
+      --) shift; extra=("$@"); break ;;
+      *) die "unknown option $1 (see the top of $HERE/ios-ota)" ;;
+    esac
+  done
+
+  # The project: given, or the one workspace / project here (generated first from project.yml when only that exists).
+  if [ -z "$project$workspace" ]; then
+    if [ -f project.yml ] && ! ls -d *.xcodeproj >/dev/null 2>&1; then xcodegen generate -q; fi
+    local ws=( $(ls -d *.xcworkspace 2>/dev/null || true) ) pr=( $(ls -d *.xcodeproj 2>/dev/null || true) )
+    if [ ${#ws[@]} -eq 1 ]; then workspace="${ws[0]}"
+    elif [ ${#pr[@]} -eq 1 ]; then project="${pr[0]}"
+    else die "found ${#ws[@]} workspaces and ${#pr[@]} projects here; pass --workspace or --project"; fi
+  fi
+  local where=(); if [ -n "$workspace" ]; then where=(-workspace "$workspace"); else where=(-project "$project"); fi
+
+  # The scheme: given, or the only one.
+  if [ -z "$scheme" ]; then
+    local schemes
+    schemes=$(xcodebuild "${where[@]}" -list -json 2>/dev/null | python3 -c 'import json,sys; d=json.load(sys.stdin); print("\n".join((d.get("project") or d.get("workspace"))["schemes"]))')
+    [ "$(echo "$schemes" | grep -c .)" -eq 1 ] || die "pass --scheme, one of: $(echo $schemes)"
+    scheme="$schemes"
+  fi
+
+  local team
+  team=$(xcodebuild "${where[@]}" -scheme "$scheme" -configuration Release -showBuildSettings ${extra[@]+"${extra[@]}"} 2>/dev/null \
+         | awk -F' = ' '/ DEVELOPMENT_TEAM = / { print $2; exit }')
+  [ -n "$team" ] || die "no DEVELOPMENT_TEAM in the build settings of $scheme"
+
+  local work; work=$(mktemp -d "${TMPDIR:-/tmp}/ios-ota.XXXXXX")
+  trap "rm -rf '$work'" EXIT                                   # expanded now: \$work is gone once publish returns
+  local commit=""
+  if git rev-parse --git-dir >/dev/null 2>&1; then
+    commit="$(git rev-parse --abbrev-ref HEAD) @ $(git rev-parse --short HEAD)"
+    git diff --quiet HEAD 2>/dev/null || commit="$commit, with uncommitted changes"
+  fi
+  echo "Building $scheme${commit:+ ($commit)}..."
+  xcodebuild "${where[@]}" -scheme "$scheme" -configuration Release -destination generic/platform=iOS \
+    -archivePath "$work/App.xcarchive" -allowProvisioningUpdates ${extra[@]+"${extra[@]}"} archive -quiet
+
+  cat > "$work/ExportOptions.plist" <<PLIST
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0"><dict>
+  <key>method</key><string>debugging</string>
+  <key>teamID</key><string>$team</string>
+  <key>signingStyle</key><string>automatic</string>
+  <key>thinning</key><string>&lt;none&gt;</string>
+</dict></plist>
+PLIST
+  xcodebuild -exportArchive -archivePath "$work/App.xcarchive" -exportOptionsPlist "$work/ExportOptions.plist" \
+    -exportPath "$work/export" -allowProvisioningUpdates -quiet
+
+  local info="$work/App.xcarchive/Info.plist"
+  local bundle version build app title
+  bundle=$(/usr/libexec/PlistBuddy -c 'Print :ApplicationProperties:CFBundleIdentifier' "$info")
+  version=$(/usr/libexec/PlistBuddy -c 'Print :ApplicationProperties:CFBundleShortVersionString' "$info")
+  build=$(/usr/libexec/PlistBuddy -c 'Print :ApplicationProperties:CFBundleVersion' "$info")
+  app=$(/usr/libexec/PlistBuddy -c 'Print :ApplicationProperties:ApplicationPath' "$info")
+  title=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleDisplayName' "$work/App.xcarchive/Products/$app/Info.plist" 2>/dev/null \
+          || /usr/libexec/PlistBuddy -c 'Print :CFBundleName' "$work/App.xcarchive/Products/$app/Info.plist")
+
+  local base="https://$(host):$PORT"
+  local id; id=$(date +%Y%m%d-%H%M%S)-$(openssl rand -hex 6)      # a fresh, unguessable folder per build
+  local dir="$ROOT/$bundle/$id"
+  mkdir -p "$dir"
+  cp "$(ls "$work"/export/*.ipa | head -1)" "$dir/App.ipa"
+
+  cat > "$dir/manifest.plist" <<PLIST
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0"><dict>
+  <key>items</key><array><dict>
+    <key>assets</key><array><dict>
+      <key>kind</key><string>software-package</string>
+      <key>url</key><string>$base/$bundle/$id/App.ipa</string>
+    </dict></array>
+    <key>metadata</key><dict>
+      <key>bundle-identifier</key><string>$bundle</string>
+      <key>bundle-version</key><string>$version</string>
+      <key>kind</key><string>software</string>
+      <key>title</key><string>$(esc "$title")</string>
+    </dict>
+  </dict></array>
+</dict></plist>
+PLIST
+
+  local manifest; manifest=$(python3 -c 'import sys, urllib.parse; print(urllib.parse.quote(sys.argv[1], safe=""))' "$base/$bundle/$id/manifest.plist")
+  local stamp; stamp=$(date '+%b %-d, %H:%M')
+  local t; t=$(esc "$title")
+  local line="Version $version ($build) &middot; $stamp"
+  local from=""; [ -n "$commit" ] && from="<p>$(esc "$commit")</p>"
+
+  # The app's page: always its newest build.
+  cat > "$ROOT/$bundle/index.html" <<HTML
+<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Install $t</title>$(page_style)</head>
+<body><main><div class="card">
+  <h1>$t</h1><p>$line</p>$from
+  <a class="install" href="itms-services://?action=download-manifest&amp;url=$manifest">Install</a>
+</div><p>After tapping Install, go to the Home Screen to watch it install.</p></main></body></html>
+HTML
+  # Its entry on the page listing every app, and a line for `ios-ota status`.
+  echo "<a class=\"app\" href=\"$bundle/\"><div class=\"card\"><h2>$t</h2><p>$line</p>$from</div></a>" > "$ROOT/$bundle/card.html"
+  echo "$title $version ($build), $stamp: $base/$bundle/" > "$ROOT/$bundle/app.txt"
+  write_root_index
+
+  # The newest builds of this app only; older links stop working with their files.
+  ls -1d "$ROOT/$bundle"/*/ 2>/dev/null | sort -r | tail -n +$((KEEP + 1)) | while read -r old; do rm -rf "$old"; done
+
+  { listening && shared; } || setup >/dev/null
+
+  echo
+  echo "$title $version ($build) is ready. On the iPhone (Tailscale on), open:"
+  echo "  $base/$bundle/"
+  if command -v qrencode >/dev/null; then qrencode -t ANSIUTF8 -m 1 "$base/$bundle/"; fi
+}
+
+case "${1:-}" in
+  publish) shift; publish "$@" ;;
+  setup) setup ;;
+  status) status ;;
+  uninstall) uninstall ;;
+  *) sed -n '2,12p' "$0" | sed 's/^# \{0,1\}//'; exit 1 ;;
+esac
