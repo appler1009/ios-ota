@@ -1,0 +1,96 @@
+# Writes the install pages of ios-ota from the build.json of every published build, so the pages always match what is on
+# disk: one page per app (/<bundle id>/, its newest build) and one listing every app. Run by `ios-ota publish` after a
+# build is added, and by the menu bar app after one is deleted.
+#
+#     python3 pages.py <builds folder>
+#
+# build.json (written by `ios-ota publish`, read here and by the menu bar app):
+#   id, bundle, title, version, build, time (ISO 8601), commit ("branch @ sha", may be empty), project (folder it was
+#   built from, may be empty), size (bytes of App.ipa), manifest (absolute https URL of manifest.plist)
+
+import html
+import json
+import os
+import sys
+import urllib.parse
+from datetime import datetime
+
+STYLE = """<style>
+  :root { color-scheme: light dark; --bg: #f2f2f7; --card: #fff; --text: #1c1c1e; --dim: #6e6e73; --accent: #0a84ff; }
+  @media (prefers-color-scheme: dark) { :root { --bg: #000; --card: #1c1c1e; --text: #f2f2f7; --dim: #98989d; } }
+  body { margin: 0; background: var(--bg); color: var(--text); font: 17px -apple-system, system-ui, sans-serif; }
+  main { padding: 40px 16px; display: flex; flex-direction: column; gap: 14px; }
+  .card { background: var(--card); border-radius: 18px; padding: 20px; }
+  h1 { font-size: 24px; margin: 0 0 6px; }
+  h2 { font-size: 19px; margin: 0 0 4px; }
+  p { margin: 3px 0; color: var(--dim); font-size: 15px; }
+  a.install { display: block; margin-top: 16px; padding: 14px; border-radius: 14px; background: var(--accent);
+              color: #fff; font-weight: 600; text-decoration: none; font-size: 18px; text-align: center; }
+  a.app { color: inherit; text-decoration: none; display: block; }
+</style>"""
+
+HEAD = '<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">'
+
+
+def builds(root):
+    """Every app's builds, newest first: {bundle: [build, ...]}."""
+    out = {}
+    for bundle in sorted(os.listdir(root)):
+        folder = os.path.join(root, bundle)
+        if not os.path.isdir(folder):
+            continue
+        found = []
+        for bid in os.listdir(folder):
+            path = os.path.join(folder, bid, "build.json")
+            try:
+                with open(path) as f:
+                    found.append(json.load(f))
+            except (OSError, ValueError):
+                continue
+        if found:
+            out[bundle] = sorted(found, key=lambda b: b.get("time", ""), reverse=True)
+    return out
+
+
+def line(b):
+    when = b.get("time", "")
+    try:
+        when = datetime.fromisoformat(when.replace("Z", "+00:00")).astimezone().strftime("%b %-d, %H:%M")
+    except ValueError:
+        pass
+    text = f"Version {html.escape(b.get('version', '?'))} ({html.escape(str(b.get('build', '?')))}) &middot; {html.escape(when)}"
+    commit = f"<p>{html.escape(b['commit'])}</p>" if b.get("commit") else ""
+    return f"<p>{text}</p>{commit}"
+
+
+def write(path, text):
+    tmp = path + ".tmp"
+    with open(tmp, "w") as f:
+        f.write(text)
+    os.replace(tmp, path)          # never a half-written page
+
+
+def main(root):
+    apps = builds(root)
+    for bundle, list_ in apps.items():
+        b = list_[0]
+        title = html.escape(b.get("title", bundle))
+        link = "itms-services://?action=download-manifest&amp;url=" + urllib.parse.quote(b["manifest"], safe="")
+        write(os.path.join(root, bundle, "index.html"),
+              f"{HEAD}<title>Install {title}</title>{STYLE}</head><body><main><div class=\"card\"><h1>{title}</h1>{line(b)}"
+              f"<a class=\"install\" href=\"{link}\">Install</a></div>"
+              f"<p>After tapping Install, go to the Home Screen to watch it install.</p></main></body></html>")
+    # Apps whose builds are all gone lose their page.
+    for bundle in os.listdir(root):
+        page = os.path.join(root, bundle, "index.html")
+        if bundle not in apps and os.path.exists(page):
+            os.remove(page)
+    newest_first = sorted(apps.items(), key=lambda kv: kv[1][0].get("time", ""), reverse=True)
+    cards = "".join(f"<a class=\"app\" href=\"{urllib.parse.quote(bundle)}/\"><div class=\"card\"><h2>{html.escape(l[0].get('title', bundle))}</h2>"
+                    f"{line(l[0])}</div></a>" for bundle, l in newest_first)
+    write(os.path.join(root, "index.html"),
+          f"{HEAD}<title>Install apps</title>{STYLE}</head><body><main><h1>Apps</h1>{cards or '<p>Nothing published yet.</p>'}</main></body></html>")
+
+
+if __name__ == "__main__":
+    main(sys.argv[1])
