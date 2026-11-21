@@ -218,9 +218,14 @@ build_app() {
          | awk -F' = ' '/ DEVELOPMENT_TEAM = / { print $2; exit }')
   [ -n "$team" ] || die "no DEVELOPMENT_TEAM in the build settings of $scheme"
 
+  # Xcode's intermediate files (which include a built copy of the app) go in $work, which is deleted afterwards, so no
+  # build is left on this Mac for it to launch or index. Downloaded Swift packages are kept between publishes, per project.
+  local packages="$HOME/Library/Caches/ios-ota/packages/$(printf '%s' "$PWD" | shasum -a 256 | cut -c1-12)"
+  mkdir -p "$packages"
   echo "Building $scheme..."
   xcodebuild "${where[@]}" -scheme "$scheme" -configuration Release -destination generic/platform=iOS \
-    -archivePath "$work/App.xcarchive" -allowProvisioningUpdates ${extra[@]+"${extra[@]}"} archive -quiet
+    -archivePath "$work/App.xcarchive" -derivedDataPath "$work/DerivedData" -clonedSourcePackagesDirPath "$packages" \
+    -allowProvisioningUpdates ${extra[@]+"${extra[@]}"} archive -quiet
 
   cat > "$work/ExportOptions.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
