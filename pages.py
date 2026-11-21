@@ -72,6 +72,11 @@ def when(iso):
         return iso
 
 
+def version(b):
+    """Just the version, for the list of apps (the dates and commit are on each app's page)."""
+    return f"<p>Version {html.escape(b.get('version', '?'))} ({html.escape(str(b.get('build', '?')))})</p>"
+
+
 def line(b):
     text = f"Version {html.escape(b.get('version', '?'))} ({html.escape(str(b.get('build', '?')))}) &middot; built {html.escape(when(b.get('time', '')))}"
     commit = ""
@@ -126,7 +131,7 @@ def main(root):
     newest_first = sorted(apps.items(), key=lambda kv: changed(kv[1][0]), reverse=True)
     cards = "".join(f"<a class=\"app\" href=\"{urllib.parse.quote(bundle)}/\"><div class=\"card row\">"
                     f"{icon(l[0], 'icon', urllib.parse.quote(bundle) + '/')}"
-                    f"<div><h2>{html.escape(l[0].get('title', bundle))}</h2>{line(l[0])}</div></div></a>" for bundle, l in newest_first)
+                    f"<div><h2>{html.escape(l[0].get('title', bundle))}</h2>{version(l[0])}</div></div></a>" for bundle, l in newest_first)
     write(os.path.join(root, "index.html"),
           f"{HEAD}<title>Install apps</title>{STYLE}</head><body><main><h1>Apps</h1>{cards or '<p>Nothing published yet.</p>'}</main></body></html>")
 
