@@ -6,120 +6,172 @@ import SwiftUI
 /// what is published, from the menu bar. Projects publish with `ios-ota publish`; this app picks the builds up by itself.
 @main
 struct IOSOTAApp: App {
-    @State private var store = Store()
+    @NSApplicationDelegateAdaptor private var delegate: AppDelegate
 
-    init() {
+    var body: some Scene {
+        Settings { EmptyView() }          // the menu is AppKit's (see MenuController); the app has no other window of its own
+    }
+}
+
+@MainActor final class AppDelegate: NSObject, NSApplicationDelegate {
+    private var menu: MenuController?
+
+    func applicationDidFinishLaunching(_ notification: Notification) {
         // The install pages are served only while this app runs, so it starts at login unless that was turned off in the menu.
         if !UserDefaults.standard.bool(forKey: "loginItemOffered") {
             UserDefaults.standard.set(true, forKey: "loginItemOffered")
             try? SMAppService.mainApp.register()
         }
-    }
-
-    var body: some Scene {
-        MenuBarExtra {
-            MenuContent(store: store)
-        } label: {
-            Image(systemName: "iphone.and.arrow.forward")
-        }
-        .menuBarExtraStyle(.menu)
-
-        WindowGroup("Install on iPhone", id: "qr", for: String.self) { $text in
-            if let text { QRWindow(text: text) }
-        }
-        .windowResizability(.contentSize)
+        menu = MenuController(store: Store())
     }
 }
 
-private struct MenuContent: View {
-    let store: Store
-    @Environment(\.openWindow) private var openWindow
-    @State private var startsAtLogin = SMAppService.mainApp.status == .enabled
+/// The menu bar item and its menu, in AppKit: a menu item there can have a subtitle (a smaller grey second line, used for
+/// versions and dates) and its own icon, which SwiftUI's menu bar menus drop. Rebuilt each time it opens, from the store.
+@MainActor final class MenuController: NSObject, NSMenuDelegate {
+    private let store: Store
+    private let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
+    private var qrWindows: [NSWindow] = []
 
-    var body: some View {
+    init(store: Store) {
+        self.store = store
+        super.init()
+        item.button?.image = NSImage(systemSymbolName: "iphone.and.arrow.forward", accessibilityDescription: "iOS OTA")
+        let menu = NSMenu()
+        menu.delegate = self
+        item.menu = menu
+    }
+
+    func menuNeedsUpdate(_ menu: NSMenu) {
+        menu.removeAllItems()
+
         // Server and tailnet.
         if let problem = store.serverProblem {
-            Text(problem)
-            Button("Restart Server") { store.restartServer() }
+            menu.addItem(note(problem))
+            menu.addItem(action("Restart Server") { [store] in store.restartServer() })
         } else {
-            Text("Serving on 127.0.0.1:\(String(Store.port))")
+            menu.addItem(note("Serving on 127.0.0.1:\(Store.port)"))
         }
         if store.host == nil {
-            Text("Tailscale is off: the iPhone cannot reach the pages")
+            menu.addItem(note("Tailscale is off: the iPhone cannot reach the pages"))
         } else if store.shared {
-            Text("Shared on the tailnet at port \(String(Store.tailnetPort))")
+            menu.addItem(note("Shared on the tailnet at port \(Store.tailnetPort)"))
         } else {
-            Button("Share on the Tailnet (Port \(String(Store.tailnetPort)))") { Task { await store.share() } }
+            menu.addItem(action("Share on the Tailnet (Port \(Store.tailnetPort))") { [store] in Task { await store.share() } })
         }
         if let url = store.pageURL {
-            Button("Open the Apps Page") { NSWorkspace.shared.open(url) }
-            Button("Show the Apps Page as a QR Code") { show(url.absoluteString) }
+            menu.addItem(action("Open the Apps Page") { NSWorkspace.shared.open(url) })
+            menu.addItem(action("Show the Apps Page as a QR Code") { [weak self] in self?.showQR(url.absoluteString) })
         }
-        Divider()
+        menu.addItem(.separator())
 
-        // Apps.
-        if store.apps.isEmpty {
-            Text("Nothing published yet. In a project: ios-ota publish")
+        // Apps: the name, the version under it, the app's icon.
+        if store.apps.isEmpty { menu.addItem(note("Nothing published yet. In a project: ios-ota publish")) }
+        for app in store.apps {
+            let entry = NSMenuItem(title: app.newest.title, action: nil, keyEquivalent: "")
+            subtitle(entry, app.newest.versionText)
+            entry.image = store.icon(app)
+            entry.submenu = appMenu(app)
+            menu.addItem(entry)
         }
-        ForEach(store.apps) { app in
-            Menu {
-                appItems(app)
-            } label: {
-                if let icon = store.icon(app) {
-                    Label { Text("\(app.newest.title)  \(app.newest.versionText)") } icon: { Image(nsImage: icon) }
-                } else {
-                    Text("\(app.newest.title)  \(app.newest.versionText)")
-                }
-            }
-        }
-        Divider()
+        menu.addItem(.separator())
 
-        Toggle("Notify About New Builds", isOn: Binding(get: { store.notify }, set: { store.notify = $0 }))
-        Toggle("Start at Login", isOn: Binding(get: { startsAtLogin }, set: { setStartsAtLogin($0) }))
-        Button("Quit (Installs Stop Until It Runs Again)") { NSApp.terminate(nil) }
-            .keyboardShortcut("q")
+        let notify = action("Notify About New Builds") { [store] in store.notify.toggle() }
+        notify.state = store.notify ? .on : .off
+        menu.addItem(notify)
+        let login = action("Start at Login") {
+            if SMAppService.mainApp.status == .enabled { try? SMAppService.mainApp.unregister() } else { try? SMAppService.mainApp.register() }
+        }
+        login.state = SMAppService.mainApp.status == .enabled ? .on : .off
+        menu.addItem(login)
+        let quit = NSMenuItem(title: "Quit (Installs Stop Until It Runs Again)", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
+        menu.addItem(quit)
     }
 
-    @ViewBuilder private func appItems(_ app: PublishedApp) -> some View {
+    private func appMenu(_ app: PublishedApp) -> NSMenu {
+        let menu = NSMenu()
         let b = app.newest
-        Text("Built \(b.whenText) \u{00B7} \(b.sizeText)")
-        if !b.commit.isEmpty { Text([b.commit, b.committedText].compactMap { $0 }.joined(separator: " \u{00B7} ")) }
+        menu.addItem(note("Built \(b.whenText) \u{00B7} \(b.sizeText)"))
+        if !b.commit.isEmpty { menu.addItem(note([b.commit, b.committedText].compactMap { $0 }.joined(separator: " \u{00B7} "))) }
         if let url = store.pageURL(app) {
-            Button("Copy Install Page Link") { copy(url.absoluteString) }
-            Button("Show Install Page as a QR Code") { show(url.absoluteString) }
-            Button("Open Install Page") { NSWorkspace.shared.open(url) }
+            menu.addItem(action("Copy Install Page Link") { Self.copy(url.absoluteString) })
+            menu.addItem(action("Show Install Page as a QR Code") { [weak self] in self?.showQR(url.absoluteString) })
+            menu.addItem(action("Open Install Page") { NSWorkspace.shared.open(url) })
         }
-        Button("Show in Finder") { NSWorkspace.shared.activateFileViewerSelecting([store.folder(b).appendingPathComponent("App.ipa")]) }
+        let ipa = store.folder(b).appendingPathComponent("App.ipa")
+        menu.addItem(action("Show in Finder") { NSWorkspace.shared.activateFileViewerSelecting([ipa]) })
         if !b.project.isEmpty {
-            Button("Show Project in Finder") { NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: b.project)]) }
+            let project = URL(fileURLWithPath: b.project)
+            menu.addItem(action("Show Project in Finder") { NSWorkspace.shared.activateFileViewerSelecting([project]) })
         }
-        Divider()
-        Menu("All Builds (\(app.builds.count))") {
-            ForEach(app.builds) { build in
-                Menu("\(build.versionText)  \(build.whenText)") {
-                    if !build.commit.isEmpty { Text(build.commit) }
-                    Button("Copy Direct Install Link") { copy(build.installLink) }
-                    Button("Show Direct Install Link as a QR Code") { show(build.installLink) }
-                    Button("Show in Finder") { NSWorkspace.shared.activateFileViewerSelecting([store.folder(build).appendingPathComponent("App.ipa")]) }
-                    Divider()
-                    Button("Delete This Build") { store.delete(build) }
-                }
-            }
+        menu.addItem(.separator())
+
+        let all = NSMenuItem(title: "All Builds (\(app.builds.count))", action: nil, keyEquivalent: "")
+        let builds = NSMenu()
+        for build in app.builds {
+            let entry = NSMenuItem(title: build.versionText, action: nil, keyEquivalent: "")
+            subtitle(entry, build.whenText)
+            let sub = NSMenu()
+            if !build.commit.isEmpty { sub.addItem(note(build.commit)) }
+            sub.addItem(action("Copy Direct Install Link") { Self.copy(build.installLink) })
+            sub.addItem(action("Show Direct Install Link as a QR Code") { [weak self] in self?.showQR(build.installLink) })
+            let file = store.folder(build).appendingPathComponent("App.ipa")
+            sub.addItem(action("Show in Finder") { NSWorkspace.shared.activateFileViewerSelecting([file]) })
+            sub.addItem(.separator())
+            sub.addItem(action("Delete This Build") { [store] in store.delete(build) })
+            entry.submenu = sub
+            builds.addItem(entry)
         }
+        all.submenu = builds
+        menu.addItem(all)
+        return menu
     }
 
-    private func copy(_ s: String) {
+    // MARK: Items
+
+    /// A line that only tells something (greyed, not clickable).
+    private func note(_ text: String) -> NSMenuItem {
+        let i = NSMenuItem(title: text, action: nil, keyEquivalent: "")
+        i.isEnabled = false
+        return i
+    }
+
+    private func action(_ title: String, _ run: @escaping () -> Void) -> NSMenuItem {
+        let i = ClosureItem(title: title, run: run)
+        i.target = i
+        return i
+    }
+
+    /// The smaller grey second line of a menu item (macOS 14.4 and later; before that, the same text after the title).
+    private func subtitle(_ item: NSMenuItem, _ text: String) {
+        if #available(macOS 14.4, *) { item.subtitle = text } else { item.title += " \u{00B7} " + text }
+    }
+
+    private static func copy(_ s: String) {
         NSPasteboard.general.clearContents()
         NSPasteboard.general.setString(s, forType: .string)
     }
 
-    private func show(_ s: String) {
+    private func showQR(_ text: String) {
+        let w = NSWindow(contentViewController: NSHostingController(rootView: QRWindow(text: text)))
+        w.title = "Install on iPhone"
+        w.styleMask = [.titled, .closable]
+        w.isReleasedWhenClosed = false
+        w.center()
+        qrWindows.removeAll { !$0.isVisible }
+        qrWindows.append(w)
         NSApp.activate(ignoringOtherApps: true)
-        openWindow(id: "qr", value: s)
+        w.makeKeyAndOrderFront(nil)
     }
+}
 
-    private func setStartsAtLogin(_ on: Bool) {
-        do { if on { try SMAppService.mainApp.register() } else { try SMAppService.mainApp.unregister() } } catch {}
-        startsAtLogin = SMAppService.mainApp.status == .enabled
+/// A menu item that runs a closure when chosen.
+private final class ClosureItem: NSMenuItem {
+    private let run: () -> Void
+    init(title: String, run: @escaping () -> Void) {
+        self.run = run
+        super.init(title: title, action: #selector(fire), keyEquivalent: "")
     }
+    required init(coder: NSCoder) { fatalError() }
+    @objc private func fire() { run() }
 }
