@@ -89,6 +89,7 @@ final class Server: @unchecked Sendable {
         case "html": "text/html; charset=utf-8"
         case "plist": "text/xml"
         case "json": "application/json"
+        case "png": "image/png"
         default: "application/octet-stream"
         }
     }

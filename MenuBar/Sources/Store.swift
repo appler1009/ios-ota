@@ -15,6 +15,7 @@ struct Build: Codable, Identifiable, Hashable {
     let project: String
     let size: Int
     let manifest: String
+    let icon: String?          // "icon.png" in the build folder; nil or empty when the app has none (or an older build)
 
     var date: Date { ISO8601DateFormatter().date(from: time) ?? .distantPast }
     var whenText: String { date.formatted(.dateTime.month(.abbreviated).day().hour().minute()) }
@@ -127,6 +128,14 @@ struct PublishedApp: Identifiable {
     }
 
     func folder(_ b: Build) -> URL { Self.root.appendingPathComponent(b.bundle).appendingPathComponent(b.id) }
+
+    /// The app's icon at menu size, from its newest build that has one.
+    func icon(_ app: PublishedApp) -> NSImage? {
+        guard let b = app.builds.first(where: { !($0.icon ?? "").isEmpty }),
+              let image = NSImage(contentsOf: folder(b).appendingPathComponent(b.icon!)) else { return nil }
+        image.size = NSSize(width: 18, height: 18)
+        return image
+    }
 
     // MARK: Server and tailnet
 

@@ -62,8 +62,14 @@ private struct MenuContent: View {
             Text("Nothing published yet. In a project: ios-ota publish")
         }
         ForEach(store.apps) { app in
-            Menu("\(app.newest.title)  \(app.newest.versionText)") {
+            Menu {
                 appItems(app)
+            } label: {
+                if let icon = store.icon(app) {
+                    Label { Text("\(app.newest.title)  \(app.newest.versionText)") } icon: { Image(nsImage: icon) }
+                } else {
+                    Text("\(app.newest.title)  \(app.newest.versionText)")
+                }
             }
         }
         Divider()

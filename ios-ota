@@ -121,7 +121,7 @@ publish() {
   if [ -n "$ipa" ]; then
     [ -f "$ipa" ] || die "no such file: $ipa"
     cp "$ipa" "$work/App.ipa"
-    (cd "$work" && unzip -q App.ipa 'Payload/*.app/Info.plist')
+    (cd "$work" && { unzip -qo App.ipa 'Payload/*.app/Info.plist' 'Payload/*.app/*.png' 2>/dev/null || unzip -qo App.ipa 'Payload/*.app/Info.plist'; })
     appinfo=$(ls "$work"/Payload/*.app/Info.plist | head -1)
     [ -n "$commit" ] || commit="$(basename "$ipa")"
   else
@@ -141,19 +141,23 @@ publish() {
   local dir="$ROOT/$bundle/$id"
   mkdir -p "$dir"
   cp "$work/App.ipa" "$dir/App.ipa"
+  local icon=""; save_icon "$(dirname "$appinfo")" "$dir/icon.png" && icon="icon.png"
 
-  python3 - "$dir" "$base/$bundle/$id" "$id" "$bundle" "$title" "$version" "$build" "$commit" "$from" <<'PY'
+  python3 - "$dir" "$base/$bundle/$id" "$id" "$bundle" "$title" "$version" "$build" "$commit" "$from" "$icon" <<'PY'
 import json, os, plistlib, sys
 from datetime import datetime, timezone
-d, url, bid, bundle, title, version, build, commit, project = sys.argv[1:]
+d, url, bid, bundle, title, version, build, commit, project, icon = sys.argv[1:]
+assets = [{"kind": "software-package", "url": f"{url}/App.ipa"}]
+if icon:   # shown on the iPhone while the app installs
+    assets += [{"kind": "display-image", "url": f"{url}/{icon}"}, {"kind": "full-size-image", "url": f"{url}/{icon}"}]
 with open(os.path.join(d, "manifest.plist"), "wb") as f:
     plistlib.dump({"items": [{
-        "assets": [{"kind": "software-package", "url": f"{url}/App.ipa"}],
+        "assets": assets,
         "metadata": {"bundle-identifier": bundle, "bundle-version": version, "kind": "software", "title": title},
     }]}, f)
 info = {"id": bid, "bundle": bundle, "title": title, "version": version, "build": build,
         "time": datetime.now(timezone.utc).isoformat(timespec="seconds"), "commit": commit, "project": project,
-        "size": os.path.getsize(os.path.join(d, "App.ipa")), "manifest": f"{url}/manifest.plist"}
+        "size": os.path.getsize(os.path.join(d, "App.ipa")), "manifest": f"{url}/manifest.plist", "icon": icon}
 with open(os.path.join(d, "build.json"), "w") as f:
     json.dump(info, f, indent=1)     # written last: a build counts once this file exists
 PY
@@ -167,6 +171,18 @@ PY
   echo "$title $version ($build) is ready. On the iPhone (Tailscale on), open:"
   echo "  $base/$bundle/"
   if command -v qrencode >/dev/null; then qrencode -t ANSIUTF8 -m 1 "$base/$bundle/"; fi
+}
+
+# The app's icon, as a standard PNG at $2: the largest icon image in the app at $1. iOS keeps these in its own PNG variant
+# (CgBI), which browsers cannot show; sips reads it and writes a normal PNG. False when the app has no icon images.
+save_icon() {
+  local app="$1" out="$2" best="" size=0 w f
+  for f in "$app"/AppIcon*.png "$app"/Icon*.png; do
+    [ -f "$f" ] || continue
+    w=$(sips -g pixelWidth "$f" 2>/dev/null | awk '/pixelWidth/ { print $2 }')
+    if [ "${w:-0}" -gt "$size" ]; then size=$w; best=$f; fi
+  done
+  [ -n "$best" ] && sips -s format png "$best" --out "$out" >/dev/null 2>&1
 }
 
 # Archives and exports the project in the current folder into $1/App.ipa (and $1/App.xcarchive).

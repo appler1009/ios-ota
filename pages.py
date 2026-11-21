@@ -6,7 +6,8 @@
 #
 # build.json (written by `ios-ota publish`, read here and by the menu bar app):
 #   id, bundle, title, version, build, time (ISO 8601), commit ("branch @ sha", may be empty), project (folder it was
-#   built from, may be empty), size (bytes of App.ipa), manifest (absolute https URL of manifest.plist)
+#   built from, may be empty), size (bytes of App.ipa), manifest (absolute https URL of manifest.plist), icon (file name
+#   of the app's icon in the build folder, "icon.png", or empty when the app has none)
 
 import html
 import json
@@ -27,6 +28,10 @@ STYLE = """<style>
   a.install { display: block; margin-top: 16px; padding: 14px; border-radius: 14px; background: var(--accent);
               color: #fff; font-weight: 600; text-decoration: none; font-size: 18px; text-align: center; }
   a.app { color: inherit; text-decoration: none; display: block; }
+  .row { display: flex; gap: 14px; align-items: center; }
+  .icon { width: 60px; height: 60px; border-radius: 13.5px; flex: none; }
+  .big { width: 96px; height: 96px; border-radius: 21.5px; display: block; margin: 0 auto 12px; }
+  .center { text-align: center; }
 </style>"""
 
 HEAD = '<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">'
@@ -63,6 +68,14 @@ def line(b):
     return f"<p>{text}</p>{commit}"
 
 
+def icon(b, cls, prefix=""):
+    """The <img> of a build's icon, or nothing. `prefix` is the path from the page to the app's folder."""
+    if not b.get("icon"):
+        return ""
+    src = prefix + urllib.parse.quote(b["id"]) + "/" + urllib.parse.quote(b["icon"])
+    return f'<img class="{cls}" src="{src}" alt="">'
+
+
 def write(path, text):
     tmp = path + ".tmp"
     with open(tmp, "w") as f:
@@ -77,7 +90,7 @@ def main(root):
         title = html.escape(b.get("title", bundle))
         link = "itms-services://?action=download-manifest&amp;url=" + urllib.parse.quote(b["manifest"], safe="")
         write(os.path.join(root, bundle, "index.html"),
-              f"{HEAD}<title>Install {title}</title>{STYLE}</head><body><main><div class=\"card\"><h1>{title}</h1>{line(b)}"
+              f"{HEAD}<title>Install {title}</title>{STYLE}</head><body><main><div class=\"card center\">{icon(b, 'big')}<h1>{title}</h1>{line(b)}"
               f"<a class=\"install\" href=\"{link}\">Install</a></div>"
               f"<p>After tapping Install, go to the Home Screen to watch it install.</p></main></body></html>")
     # Apps whose builds are all gone lose their page.
@@ -86,8 +99,9 @@ def main(root):
         if bundle not in apps and os.path.exists(page):
             os.remove(page)
     newest_first = sorted(apps.items(), key=lambda kv: kv[1][0].get("time", ""), reverse=True)
-    cards = "".join(f"<a class=\"app\" href=\"{urllib.parse.quote(bundle)}/\"><div class=\"card\"><h2>{html.escape(l[0].get('title', bundle))}</h2>"
-                    f"{line(l[0])}</div></a>" for bundle, l in newest_first)
+    cards = "".join(f"<a class=\"app\" href=\"{urllib.parse.quote(bundle)}/\"><div class=\"card row\">"
+                    f"{icon(l[0], 'icon', urllib.parse.quote(bundle) + '/')}"
+                    f"<div><h2>{html.escape(l[0].get('title', bundle))}</h2>{line(l[0])}</div></div></a>" for bundle, l in newest_first)
     write(os.path.join(root, "index.html"),
           f"{HEAD}<title>Install apps</title>{STYLE}</head><body><main><h1>Apps</h1>{cards or '<p>Nothing published yet.</p>'}</main></body></html>")
 
