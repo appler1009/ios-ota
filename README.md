@@ -51,7 +51,7 @@ With Tailscale on, open `https://<mac>.<tailnet>.ts.net:8444/` in Safari. Pick a
 - **Where builds go:** `~/Library/Application Support/iOS-OTA/<app key>/<random id>/`. The app key is the first 12 hex digits of the SHA-256 of the bundle id, so no address shows it.
 - **What each build holds:** `App.ipa`, the `manifest.plist` iOS installs from (it carries the bundle id, as iOS requires), the app's icon, and `build.json` with its details. The server does not hand out `build.json`.
 - **How many are kept:** the newest five builds per app.
-- **The pages:** `pages.py` writes them from the `build.json` files. There is one page per app, with the Install button and a details table, and the list of apps is sorted by when each app's code last changed.
+- **The pages:** the menu bar app writes them from the `build.json` files whenever builds appear or are deleted. There is one page per app, with the Install button and a details table, and the list of apps is sorted by when each app's code last changed.
 - **The menu bar app (`MenuBar/`):**
   - Serves the builds folder on 127.0.0.1:8445. The Mac App Store Tailscale cannot serve a folder itself, so `tailscale serve` passes it on over HTTPS at 8444, to the tailnet only.
   - Watches for new builds and notifies.

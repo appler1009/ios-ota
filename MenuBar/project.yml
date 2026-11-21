@@ -15,8 +15,6 @@ targets:
     platform: macOS
     sources:
       - path: Sources
-      - path: ../pages.py              # the same page writer the ios-ota command uses, run after a build is deleted
-        buildPhase: resources
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.appler.ios-ota.menubar

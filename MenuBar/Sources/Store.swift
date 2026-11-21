@@ -4,7 +4,7 @@ import Foundation
 import Observation
 import UserNotifications
 
-/// One published build, as `ios-ota publish` describes it in build.json (see pages.py for the fields).
+/// One published build, as `ios-ota publish` describes it in build.json (written last, once the build is complete).
 struct Build: Codable, Identifiable, Hashable {
     let id: String
     let bundle: String
@@ -73,7 +73,8 @@ struct PublishedApp: Identifiable {
     }
 
     private let server = Server(port: Store.port, root: Store.root)
-    @ObservationIgnored private var watcher: DispatchSourceFileSystemObject?
+    @ObservationIgnored private var stream: FSEventStreamRef?
+    @ObservationIgnored private var pendingScan: DispatchWorkItem?
     @ObservationIgnored private var known: Set<String>?       // build ids seen so far; nil before the first scan
     @ObservationIgnored private var timer: Timer?
 
@@ -85,7 +86,7 @@ struct PublishedApp: Identifiable {
         scan()
         watch()
         Task { await checkTailnet() }
-        // The folder watcher catches publishes (each one rewrites the top page); this also catches Tailscale changing.
+        // The folder watcher catches publishes and deletions; this also catches Tailscale changing.
         timer = Timer.scheduledTimer(withTimeInterval: 15, repeats: true) { [weak self] _ in
             Task { @MainActor in self?.scan(); await self?.checkTailnet() }
         }
@@ -112,19 +113,33 @@ struct PublishedApp: Identifiable {
         }
         known = ids
         apps = found
+        Pages.write(found, root: Self.root)
     }
 
+    /// Watches the whole builds folder, subfolders included: a publish adds a build inside an app's folder, which a watch on
+    /// the top folder alone does not see. Events are gathered for a moment, then the folder is scanned once.
     private func watch() {
-        let fd = open(Self.root.path, O_EVTONLY)
-        guard fd >= 0 else { return }
-        let source = DispatchSource.makeFileSystemObjectSource(fileDescriptor: fd, eventMask: [.write, .rename, .delete], queue: .main)
-        source.setEventHandler { [weak self] in
-            // pages.py writes the top page last, once the build is complete; a moment later everything is in place.
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { self?.scan() }
+        var context = FSEventStreamContext(version: 0, info: Unmanaged.passUnretained(self).toOpaque(),
+                                           retain: nil, release: nil, copyDescription: nil)
+        let callback: FSEventStreamCallback = { _, info, _, _, _, _ in
+            guard let info else { return }
+            let store = Unmanaged<Store>.fromOpaque(info).takeUnretainedValue()
+            DispatchQueue.main.async { MainActor.assumeIsolated { store.scanSoon() } }
         }
-        source.setCancelHandler { close(fd) }
-        source.resume()
-        watcher = source
+        guard let s = FSEventStreamCreate(nil, callback, &context, [Self.root.path] as CFArray,
+                                          FSEventStreamEventId(kFSEventStreamEventIdSinceNow), 0.3,
+                                          FSEventStreamCreateFlags(kFSEventStreamCreateFlagFileEvents)) else { return }
+        FSEventStreamSetDispatchQueue(s, .main)
+        FSEventStreamStart(s)
+        stream = s
+    }
+
+    /// A scan a moment from now, replacing one already waiting (a publish writes several files in a row).
+    private func scanSoon() {
+        pendingScan?.cancel()
+        let work = DispatchWorkItem { [weak self] in self?.scan() }
+        pendingScan = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.4, execute: work)
     }
 
     private func announce(_ b: Build) {
@@ -134,12 +149,9 @@ struct PublishedApp: Identifiable {
         UNUserNotificationCenter.current().add(UNNotificationRequest(identifier: b.id, content: c, trigger: nil))
     }
 
-    /// Deletes a build, then rewrites the pages so they offer what is left.
+    /// Deletes a build; the scan rewrites the pages so they offer what is left.
     func delete(_ b: Build) {
         try? FileManager.default.removeItem(at: folder(b))
-        if let script = Bundle.main.url(forResource: "pages", withExtension: "py") {
-            _ = try? run("/usr/bin/python3", [script.path, Self.root.path])
-        }
         scan()
     }
 
@@ -191,6 +203,4 @@ struct PublishedApp: Identifiable {
         p.waitUntilExit()
         return String(decoding: data, as: UTF8.self)
     }
-
-    private func run(_ tool: String, _ args: [String]) throws -> String { try Self.run(tool, args) }
 }

@@ -15,11 +15,11 @@
 # (/<app key>/) that always offers its newest build. Tap Install. Only devices registered to the signing team can install.
 # The app key is the first 12 hex digits of the SHA-256 of the bundle id, so addresses do not show the bundle id.
 #
-# How it works: builds go in ~/Library/Application Support/iOS-OTA/<app key>/<random id>/ (App.ipa, manifest.plist and
-# build.json); pages.py writes a page per app and one listing them all from the build.json files; the newest five builds
-# of each app are kept. The menu bar app "iOS OTA" (MenuBar/) serves that folder on 127.0.0.1:8445 and shows what is
-# published; `tailscale serve` passes it on over HTTPS at port 8444, to the tailnet only. Publishing starts the app if it is
-# not running, and the app starts at login.
+# How it works: builds go in ~/Library/Application Support/iOS-OTA/<app key>/<random id>/ (App.ipa, manifest.plist, the
+# icon and build.json); the newest five builds of each app are kept. The menu bar app "iOS OTA" (MenuBar/) serves that
+# folder on 127.0.0.1:8445, writes the pages (one per app and one listing them all) whenever the builds change, and shows
+# what is published; `tailscale serve` passes it on over HTTPS at port 8444, to the tailnet only. Publishing starts the app
+# if it is not running, and the app starts at login.
 
 set -euo pipefail
 
@@ -173,8 +173,7 @@ PY
 
   # The newest builds of this app only; older links stop working with their files.
   ls -1d "$ROOT/$key"/*/ 2>/dev/null | sort -r | tail -n +$((KEEP + 1)) | while read -r old; do rm -rf "$old"; done
-  python3 "$HERE/pages.py" "$ROOT"
-  ensure_server
+  ensure_server          # the menu bar app sees the new build and rewrites the pages
 
   echo
   echo "$title $version ($build) is ready. On the iPhone (Tailscale on), open:"
