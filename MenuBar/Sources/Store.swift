@@ -20,14 +20,14 @@ struct Build: Codable, Identifiable, Hashable {
     let icon: String?          // "icon.png" in the build folder; nil or empty when the app has none (or an older build)
 
     var date: Date { ISO8601DateFormatter().date(from: time) ?? .distantPast }
-    var whenText: String { date.formatted(.dateTime.month(.abbreviated).day().hour().minute()) }
+    var whenText: String { date.formatted(.dateTime.year().month(.abbreviated).day().hour().minute()) }
     /// What the list of apps sorts by: when the code last changed.
     var changedKey: String { changed ?? time }
     /// "committed Nov 19, 10:02" for a clean commit, else nil.
     var committedText: String? {
         guard let c = changed, c != time, !commit.contains("uncommitted"),
               let d = ISO8601DateFormatter().date(from: c) else { return nil }
-        return "committed " + d.formatted(.dateTime.month(.abbreviated).day().hour().minute())
+        return "committed " + d.formatted(.dateTime.year().month(.abbreviated).day().hour().minute())
     }
     var versionText: String { "\(version) (\(build))" }
     var sizeText: String { ByteCountFormatter.string(fromByteCount: Int64(size), countStyle: .file) }

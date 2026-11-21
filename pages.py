@@ -73,7 +73,7 @@ def changed(b):
 
 def when(iso):
     try:
-        return datetime.fromisoformat(iso.replace("Z", "+00:00")).astimezone().strftime("%b %-d, %H:%M")
+        return datetime.fromisoformat(iso.replace("Z", "+00:00")).astimezone().strftime("%b %-d, %Y, %H:%M")
     except ValueError:
         return iso
 
