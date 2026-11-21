@@ -162,12 +162,17 @@ struct PublishedApp: Identifiable {
 
     func folder(_ b: Build) -> URL { Self.root.appendingPathComponent(Self.key(b.bundle)).appendingPathComponent(b.id) }
 
-    /// The app's icon at menu size, from its newest build that has one.
+    /// The app's icon at menu size, from its newest build that has one, with rounded corners as the iPhone shows it (the
+    /// file is a full square). Drawn at the screen's resolution, so the edges stay smooth.
     func icon(_ app: PublishedApp) -> NSImage? {
         guard let b = app.builds.first(where: { !($0.icon ?? "").isEmpty }),
-              let image = NSImage(contentsOf: folder(b).appendingPathComponent(b.icon!)) else { return nil }
-        image.size = NSSize(width: 18, height: 18)
-        return image
+              let source = NSImage(contentsOf: folder(b).appendingPathComponent(b.icon!)) else { return nil }
+        let side: CGFloat = 18
+        return NSImage(size: NSSize(width: side, height: side), flipped: false) { rect in
+            NSBezierPath(roundedRect: rect, xRadius: side * 0.225, yRadius: side * 0.225).addClip()
+            source.draw(in: rect, from: .zero, operation: .sourceOver, fraction: 1)
+            return true
+        }
     }
 
     // MARK: Server and tailnet

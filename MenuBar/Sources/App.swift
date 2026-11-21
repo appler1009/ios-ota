@@ -71,6 +71,7 @@ struct IOSOTAApp: App {
             let entry = NSMenuItem(title: app.newest.title, action: nil, keyEquivalent: "")
             subtitle(entry, app.newest.versionText)
             entry.image = store.icon(app)
+            showImage(entry)
             entry.submenu = appMenu(app)
             menu.addItem(entry)
         }
@@ -145,6 +146,11 @@ struct IOSOTAApp: App {
     /// The smaller grey second line of a menu item (macOS 14.4 and later; before that, the same text after the title).
     private func subtitle(_ item: NSMenuItem, _ text: String) {
         if #available(macOS 14.4, *) { item.subtitle = text } else { item.title += " \u{00B7} " + text }
+    }
+
+    /// macOS 27 hides menu item images by default; this item's image is meant to be seen.
+    private func showImage(_ item: NSMenuItem) {
+        if #available(macOS 27.0, *) { item.preferredImageVisibility = .visible }
     }
 
     private static func copy(_ s: String) {
