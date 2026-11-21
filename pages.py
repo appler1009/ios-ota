@@ -101,6 +101,15 @@ def details(b):
     return rows
 
 
+def size(b):
+    """The download size, as the iPhone counts it (decimal units: 6.6 MB)."""
+    n = float(b.get("size") or 0)
+    for unit in ("bytes", "KB", "MB", "GB"):
+        if n < 1000 or unit == "GB":
+            return f"{n:.0f} {unit}" if unit in ("bytes", "KB") else f"{n:.1f} {unit}"
+        n /= 1000
+
+
 def write(path, text):
     tmp = path + ".tmp"
     with open(tmp, "w") as f:
