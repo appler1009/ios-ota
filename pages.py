@@ -76,6 +76,15 @@ def icon(b, cls, prefix=""):
     return f'<img class="{cls}" src="{src}" alt="">'
 
 
+def size(b):
+    """The download size, as the iPhone counts it (decimal units: 6.6 MB)."""
+    n = float(b.get("size") or 0)
+    for unit in ("bytes", "KB", "MB", "GB"):
+        if n < 1000 or unit == "GB":
+            return f"{n:.0f} {unit}" if unit in ("bytes", "KB") else f"{n:.1f} {unit}"
+        n /= 1000
+
+
 def write(path, text):
     tmp = path + ".tmp"
     with open(tmp, "w") as f:
@@ -91,6 +100,7 @@ def main(root):
         link = "itms-services://?action=download-manifest&amp;url=" + urllib.parse.quote(b["manifest"], safe="")
         write(os.path.join(root, bundle, "index.html"),
               f"{HEAD}<title>Install {title}</title>{STYLE}</head><body><main><div class=\"card center\">{icon(b, 'big')}<h1>{title}</h1>{line(b)}"
+              f"<p>Download size: {size(b)}</p>"
               f"<a class=\"install\" href=\"{link}\">Install</a></div>"
               f"<p>After tapping Install, go to the Home Screen to watch it install.</p></main></body></html>")
     # Apps whose builds are all gone lose their page.
