@@ -101,6 +101,14 @@ def details(b):
     return rows
 
 
+def icon(b, cls, prefix=""):
+    """The <img> of a build's icon, or nothing. `prefix` is the path from the page to the app's folder."""
+    if not b.get("icon"):
+        return ""
+    src = prefix + urllib.parse.quote(b["id"]) + "/" + urllib.parse.quote(b["icon"])
+    return f'<img class="{cls}" src="{src}" alt="">'
+
+
 def size(b):
     """The download size, as the iPhone counts it (decimal units: 6.6 MB)."""
     n = float(b.get("size") or 0)
