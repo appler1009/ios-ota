@@ -12,6 +12,7 @@ struct Build: Codable, Identifiable, Hashable {
     let version: String
     let build: String
     let time: String
+    let changed: String?       // when its code last changed (commit date, or the publish time); nil on older builds
     let commit: String
     let project: String
     let size: Int
@@ -20,6 +21,14 @@ struct Build: Codable, Identifiable, Hashable {
 
     var date: Date { ISO8601DateFormatter().date(from: time) ?? .distantPast }
     var whenText: String { date.formatted(.dateTime.month(.abbreviated).day().hour().minute()) }
+    /// What the list of apps sorts by: when the code last changed.
+    var changedKey: String { changed ?? time }
+    /// "committed Nov 19, 10:02" for a clean commit, else nil.
+    var committedText: String? {
+        guard let c = changed, c != time, !commit.contains("uncommitted"),
+              let d = ISO8601DateFormatter().date(from: c) else { return nil }
+        return "committed " + d.formatted(.dateTime.month(.abbreviated).day().hour().minute())
+    }
     var versionText: String { "\(version) (\(build))" }
     var sizeText: String { ByteCountFormatter.string(fromByteCount: Int64(size), countStyle: .file) }
     /// Opens the install prompt straight away (this build, not just the newest).
@@ -96,7 +105,7 @@ struct PublishedApp: Identifiable {
             }
             if !builds.isEmpty { found.append(PublishedApp(key: key, builds: builds.sorted { $0.time > $1.time })) }
         }
-        found.sort { $0.newest.time > $1.newest.time }
+        found.sort { $0.newest.changedKey > $1.newest.changedKey }      // apps whose code changed last first
         let ids = Set(found.flatMap { $0.builds.map(\.id) })
         if let known, notify {
             for b in found.flatMap(\.builds) where !known.contains(b.id) { announce(b) }

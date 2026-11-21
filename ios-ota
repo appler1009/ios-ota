@@ -111,11 +111,14 @@ publish() {
 
   local work; work=$(mktemp -d "${TMPDIR:-/tmp}/ios-ota.XXXXXX")
   trap "rm -rf '$work'" EXIT                                   # expanded now: \$work is gone once publish returns
-  local commit="" from=""
+  # Where the code came from. `changed` is when it last changed: the commit's date, or now when there are uncommitted
+  # changes (or no commit at all), since those are newer than any commit. It never fetches or pulls: it builds this checkout.
+  local commit="" from="" changed=""
   if git rev-parse --git-dir >/dev/null 2>&1; then
     commit="$(git rev-parse --abbrev-ref HEAD) @ $(git rev-parse --short HEAD)"
-    git diff --quiet HEAD 2>/dev/null || commit="$commit, with uncommitted changes"
     from=$(git rev-parse --show-toplevel)
+    if git diff --quiet HEAD 2>/dev/null; then changed=$(git log -1 --format=%cI)
+    else commit="$commit, with uncommitted changes"; fi
   fi
 
   local appinfo
@@ -145,10 +148,13 @@ publish() {
   cp "$work/App.ipa" "$dir/App.ipa"
   local icon=""; save_icon "$(dirname "$appinfo")" "$dir/icon.png" && icon="icon.png"
 
-  python3 - "$dir" "$base/$key/$id" "$id" "$bundle" "$title" "$version" "$build" "$commit" "$from" "$icon" <<'PY'
+  python3 - "$dir" "$base/$key/$id" "$id" "$bundle" "$title" "$version" "$build" "$commit" "$from" "$icon" "$changed" <<'PY'
 import json, os, plistlib, sys
 from datetime import datetime, timezone
-d, url, bid, bundle, title, version, build, commit, project, icon = sys.argv[1:]
+d, url, bid, bundle, title, version, build, commit, project, icon, changed = sys.argv[1:]
+now = datetime.now(timezone.utc)
+if changed:
+    changed = datetime.fromisoformat(changed).astimezone(timezone.utc).isoformat(timespec="seconds")
 assets = [{"kind": "software-package", "url": f"{url}/App.ipa"}]
 if icon:   # shown on the iPhone while the app installs
     assets += [{"kind": "display-image", "url": f"{url}/{icon}"}, {"kind": "full-size-image", "url": f"{url}/{icon}"}]
@@ -158,7 +164,8 @@ with open(os.path.join(d, "manifest.plist"), "wb") as f:
         "metadata": {"bundle-identifier": bundle, "bundle-version": version, "kind": "software", "title": title},
     }]}, f)
 info = {"id": bid, "bundle": bundle, "title": title, "version": version, "build": build,
-        "time": datetime.now(timezone.utc).isoformat(timespec="seconds"), "commit": commit, "project": project,
+        "time": now.isoformat(timespec="seconds"), "changed": changed or now.isoformat(timespec="seconds"),
+        "commit": commit, "project": project,
         "size": os.path.getsize(os.path.join(d, "App.ipa")), "manifest": f"{url}/manifest.plist", "icon": icon}
 with open(os.path.join(d, "build.json"), "w") as f:
     json.dump(info, f, indent=1)     # written last: a build counts once this file exists

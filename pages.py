@@ -5,7 +5,9 @@
 #     python3 pages.py <builds folder>
 #
 # build.json (written by `ios-ota publish`, read here and by the menu bar app):
-#   id, bundle, title, version, build, time (ISO 8601), commit ("branch @ sha", may be empty), project (folder it was
+#   id, bundle, title, version, build, time (published, ISO 8601), changed (when its code last changed: the commit's date,
+#   or the publish time for uncommitted changes or an app file; older builds lack it), commit ("branch @ sha", may be
+#   empty), project (folder it was
 #   built from, may be empty), size (bytes of App.ipa), manifest (absolute https URL of manifest.plist), icon (file name
 #   of the app's icon in the build folder, "icon.png", or empty when the app has none)
 
@@ -58,14 +60,25 @@ def builds(root):
     return out
 
 
-def line(b):
-    when = b.get("time", "")
+def changed(b):
+    """When a build's code last changed; what the list of apps sorts by."""
+    return b.get("changed") or b.get("time", "")
+
+
+def when(iso):
     try:
-        when = datetime.fromisoformat(when.replace("Z", "+00:00")).astimezone().strftime("%b %-d, %H:%M")
+        return datetime.fromisoformat(iso.replace("Z", "+00:00")).astimezone().strftime("%b %-d, %H:%M")
     except ValueError:
-        pass
-    text = f"Version {html.escape(b.get('version', '?'))} ({html.escape(str(b.get('build', '?')))}) &middot; {html.escape(when)}"
-    commit = f"<p>{html.escape(b['commit'])}</p>" if b.get("commit") else ""
+        return iso
+
+
+def line(b):
+    text = f"Version {html.escape(b.get('version', '?'))} ({html.escape(str(b.get('build', '?')))}) &middot; built {html.escape(when(b.get('time', '')))}"
+    commit = ""
+    if b.get("commit"):
+        # The commit's date, when the build had no uncommitted changes (then `changed` is that date, not the build time).
+        dated = b.get("changed") and "uncommitted" not in b["commit"] and b["changed"] != b.get("time")
+        commit = f"<p>{html.escape(b['commit'])}{' &middot; committed ' + html.escape(when(b['changed'])) if dated else ''}</p>"
     return f"<p>{text}</p>{commit}"
 
 
@@ -109,7 +122,8 @@ def main(root):
         page = os.path.join(root, bundle, "index.html")
         if bundle not in apps and os.path.exists(page):
             os.remove(page)
-    newest_first = sorted(apps.items(), key=lambda kv: kv[1][0].get("time", ""), reverse=True)
+    # Apps whose code changed most recently first (the newest build of each).
+    newest_first = sorted(apps.items(), key=lambda kv: changed(kv[1][0]), reverse=True)
     cards = "".join(f"<a class=\"app\" href=\"{urllib.parse.quote(bundle)}/\"><div class=\"card row\">"
                     f"{icon(l[0], 'icon', urllib.parse.quote(bundle) + '/')}"
                     f"<div><h2>{html.escape(l[0].get('title', bundle))}</h2>{line(l[0])}</div></div></a>" for bundle, l in newest_first)

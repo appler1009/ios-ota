@@ -82,8 +82,8 @@ private struct MenuContent: View {
 
     @ViewBuilder private func appItems(_ app: PublishedApp) -> some View {
         let b = app.newest
-        Text("\(b.whenText) \u{00B7} \(b.sizeText)")
-        if !b.commit.isEmpty { Text(b.commit) }
+        Text("Built \(b.whenText) \u{00B7} \(b.sizeText)")
+        if !b.commit.isEmpty { Text([b.commit, b.committedText].compactMap { $0 }.joined(separator: " \u{00B7} ")) }
         if let url = store.pageURL(app) {
             Button("Copy Install Page Link") { copy(url.absoluteString) }
             Button("Show Install Page as a QR Code") { show(url.absoluteString) }
