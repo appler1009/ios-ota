@@ -95,25 +95,30 @@ struct PublishedApp: Identifiable {
 
     // MARK: Builds
 
-    func scan() {
+    /// Every published app in the builds folder, apps whose code changed last first, each app's builds newest first.
+    /// Read fresh each time (a few small files): the menu calls it after the folder changes, the server for every page.
+    nonisolated static func load() -> [PublishedApp] {
         let fm = FileManager.default
         var found: [PublishedApp] = []
-        for key in (try? fm.contentsOfDirectory(atPath: Self.root.path)) ?? [] {
-            let folder = Self.root.appendingPathComponent(key)
+        for key in (try? fm.contentsOfDirectory(atPath: root.path)) ?? [] {
+            let folder = root.appendingPathComponent(key)
             let builds = ((try? fm.contentsOfDirectory(atPath: folder.path)) ?? []).compactMap { id -> Build? in
                 guard let data = try? Data(contentsOf: folder.appendingPathComponent(id).appendingPathComponent("build.json")) else { return nil }
                 return try? JSONDecoder().decode(Build.self, from: data)
             }
             if !builds.isEmpty { found.append(PublishedApp(key: key, builds: builds.sorted { $0.time > $1.time })) }
         }
-        found.sort { $0.newest.changedKey > $1.newest.changedKey }      // apps whose code changed last first
+        return found.sorted { $0.newest.changedKey > $1.newest.changedKey }
+    }
+
+    func scan() {
+        let found = Self.load()
         let ids = Set(found.flatMap { $0.builds.map(\.id) })
         if let known, notify {
             for b in found.flatMap(\.builds) where !known.contains(b.id) { announce(b) }
         }
         known = ids
         apps = found
-        Pages.write(found, root: Self.root)
     }
 
     /// Watches the whole builds folder, subfolders included: a publish adds a build inside an app's folder, which a watch on
@@ -149,7 +154,7 @@ struct PublishedApp: Identifiable {
         UNUserNotificationCenter.current().add(UNNotificationRequest(identifier: b.id, content: c, trigger: nil))
     }
 
-    /// Deletes a build; the scan rewrites the pages so they offer what is left.
+    /// Deletes a build. The pages are made per request, so they offer what is left straight away.
     func delete(_ b: Build) {
         try? FileManager.default.removeItem(at: folder(b))
         scan()

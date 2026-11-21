@@ -1,9 +1,10 @@
 import Foundation
 import Network
 
-/// The web server for the install pages: the builds folder, on 127.0.0.1 only (Tailscale passes it on to the tailnet over
-/// HTTPS). GET and HEAD, one request per connection, files sent whole, with the types iOS expects for an over-the-air
-/// install and no caching, so the pages and a rebuilt app are always the current ones.
+/// The web server for the install pages, on 127.0.0.1 only (Tailscale passes it on to the tailnet over HTTPS). The pages
+/// are made for each request from the builds folder: / lists the apps, /<app key>/ is an app's page. Everything else is a
+/// file from the builds folder (the app, its manifest, its icon). GET and HEAD, one request per connection, files sent
+/// whole, with the types iOS expects for an over-the-air install and no caching.
 final class Server: @unchecked Sendable {
     let port: UInt16
     let root: URL
@@ -67,22 +68,37 @@ final class Server: @unchecked Sendable {
         let parts = head.split(separator: "\r\n").first?.split(separator: " ") ?? []
         guard parts.count >= 2, parts[0] == "GET" || parts[0] == "HEAD" else { return send(c, 405, "text/plain", Data("Method not allowed".utf8)) }
         let headOnly = parts[0] == "HEAD"
-        // build.json is for the menu bar app only: it names the bundle id and the project's folder on this Mac.
-        guard let file = resolve(String(parts[1])), file.lastPathComponent != "build.json" else { return send(c, 404, "text/plain", Data("Not found".utf8)) }
+        let path = (String(parts[1]).split(separator: "?").first.map(String.init) ?? "/").removingPercentEncoding ?? ""
+        let segments = path.split(separator: "/").map(String.init)
+
+        // The pages, made now from what is published.
+        if segments.isEmpty { return send(c, 200, "text/html; charset=utf-8", Data(Pages.listPage(Store.load()).utf8), headOnly: headOnly) }
+        if segments.count == 1 {
+            guard let app = Store.load().first(where: { $0.key == segments[0] }) else { return send(c, 404, "text/plain", Data("Not found".utf8)) }
+            // Pages link relative to their folder, so the address must end in a slash.
+            if !path.hasSuffix("/") { return redirect(c, to: "/\(app.key)/") }
+            return send(c, 200, "text/html; charset=utf-8", Data(Pages.appPage(app.newest).utf8), headOnly: headOnly)
+        }
+
+        // Files of a build. build.json is for the menu bar app only: it names the bundle id and the project's folder.
+        guard let file = resolve(path), file.lastPathComponent != "build.json" else { return send(c, 404, "text/plain", Data("Not found".utf8)) }
         guard let body = try? Data(contentsOf: file, options: .alwaysMapped) else { return send(c, 404, "text/plain", Data("Not found".utf8)) }
         send(c, 200, Self.type(of: file), body, headOnly: headOnly)
     }
 
-    /// The file a URL path names inside the builds folder (a folder means its index.html), or nil. Nothing outside it.
-    private func resolve(_ target: String) -> URL? {
-        let path = (target.split(separator: "?").first.map(String.init) ?? "/").removingPercentEncoding ?? ""
+    /// The file a URL path names inside the builds folder, or nil. Nothing outside it, and no folders.
+    private func resolve(_ path: String) -> URL? {
         let base = root.standardizedFileURL.path
-        var url = URL(fileURLWithPath: base + path).standardizedFileURL
-        guard url.path == base || url.path.hasPrefix(base + "/") else { return nil }
+        let url = URL(fileURLWithPath: base + path).standardizedFileURL
+        guard url.path.hasPrefix(base + "/") else { return nil }
         var isDir: ObjCBool = false
-        guard FileManager.default.fileExists(atPath: url.path, isDirectory: &isDir) else { return nil }
-        if isDir.boolValue { url.appendPathComponent("index.html") }
-        return FileManager.default.fileExists(atPath: url.path) ? url : nil
+        guard FileManager.default.fileExists(atPath: url.path, isDirectory: &isDir), !isDir.boolValue else { return nil }
+        return url
+    }
+
+    private func redirect(_ c: NWConnection, to location: String) {
+        let head = "HTTP/1.1 301 Moved Permanently\r\nLocation: \(location)\r\nContent-Length: 0\r\nCache-Control: no-store\r\nConnection: close\r\n\r\n"
+        c.send(content: Data(head.utf8), isComplete: true, completion: .contentProcessed { _ in c.cancel() })
     }
 
     private static func type(of url: URL) -> String {

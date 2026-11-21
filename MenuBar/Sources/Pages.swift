@@ -1,23 +1,10 @@
 import Foundation
 
-/// The install pages, written from the published builds: one page per app (/<app key>/: its newest build, with the
-/// Install button and a details table) and one listing every app, sorted by when each app's code last changed. The app
-/// rewrites them whenever the builds change; a file is only written when its content differs, so writing the pages does
-/// not set off the folder watcher again.
+/// The install pages, made by the server for each request from the published builds (nothing is stored): one page per
+/// app (/<app key>/: its newest build, with the Install button and a details table) and one listing every app, sorted by
+/// when each app's code last changed.
 enum Pages {
-    static func write(_ apps: [PublishedApp], root: URL) {
-        for app in apps { save(appPage(app.newest), to: root.appendingPathComponent(app.key).appendingPathComponent("index.html")) }
-        // Folders whose builds are all gone lose their page.
-        let keys = Set(apps.map(\.key))
-        for name in (try? FileManager.default.contentsOfDirectory(atPath: root.path)) ?? [] where !keys.contains(name) {
-            try? FileManager.default.removeItem(at: root.appendingPathComponent(name).appendingPathComponent("index.html"))
-        }
-        save(listPage(apps), to: root.appendingPathComponent("index.html"))
-    }
-
-    // MARK: Pages
-
-    private static func appPage(_ b: Build) -> String {
+    static func appPage(_ b: Build) -> String {
         let title = esc(b.title)
         let link = "itms-services://?action=download-manifest&amp;url=" + quote(b.manifest)
         let rows = details(b).map { "<tr><td class=\"k\">\(esc($0.0))</td><td class=\"v\">\(esc($0.1))</td></tr>" }.joined()
@@ -26,7 +13,7 @@ enum Pages {
             + "<div class=\"card details\"><table>\(rows)</table></div></main></body></html>"
     }
 
-    private static func listPage(_ apps: [PublishedApp]) -> String {
+    static func listPage(_ apps: [PublishedApp]) -> String {
         let cards = apps.map { app in
             let b = app.newest
             return "<a class=\"app\" href=\"\(quote(app.key))/\"><div class=\"card row\">\(icon(b, "icon", prefix: quote(app.key) + "/"))"
@@ -81,12 +68,6 @@ enum Pages {
     private static func quote(_ s: String) -> String {
         s.addingPercentEncoding(withAllowedCharacters: CharacterSet(charactersIn:
             "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-._~")) ?? s
-    }
-
-    private static func save(_ text: String, to url: URL) {
-        let data = Data(text.utf8)
-        if (try? Data(contentsOf: url)) == data { return }
-        try? data.write(to: url, options: .atomic)       // never a half-written page
     }
 
     private static let head = "<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">"
