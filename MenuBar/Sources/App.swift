@@ -36,7 +36,10 @@ struct IOSOTAApp: App {
     init(store: Store) {
         self.store = store
         super.init()
-        item.button?.image = NSImage(systemSymbolName: "iphone.and.arrow.forward", accessibilityDescription: "iOS OTA")
+        // A solid shape, so it holds its own next to the other menu bar icons; an outline symbol looked faint there.
+        let symbol = NSImage.SymbolConfiguration(pointSize: 13, weight: .semibold, scale: .large)
+        item.button?.image = NSImage(systemSymbolName: "arrow.down.app.fill", accessibilityDescription: "iOS OTA")?
+            .withSymbolConfiguration(symbol)
         let menu = NSMenu()
         menu.delegate = self
         item.menu = menu
