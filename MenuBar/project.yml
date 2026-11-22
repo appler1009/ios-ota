@@ -15,11 +15,15 @@ targets:
     platform: macOS
     sources:
       - path: Sources
+      - path: AppIcon.icon       # the icon's layers, from Icon Composer; Xcode renders the app icon from them
+        type: file
+        buildPhase: resources
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.appler.ios-ota.menubar
         PRODUCT_NAME: iOS OTA
         PRODUCT_MODULE_NAME: iOSOTA
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
         CODE_SIGN_IDENTITY: "-"         # signed to run on this Mac only
         CODE_SIGN_STYLE: Manual
         ENABLE_HARDENED_RUNTIME: NO

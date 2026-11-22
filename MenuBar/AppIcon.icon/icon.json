@@ -1,0 +1,50 @@
+{
+  "fill": {
+    "automatic-gradient": "extended-srgb:0.05000,0.10000,0.32000,1.00000"
+  },
+  "groups": [
+    {
+      "layers": [
+        {
+          "glass": true,
+          "image-name": "tile.svg",
+          "name": "tile"
+        }
+      ],
+      "lighting": "individual",
+      "name": "Tile",
+      "shadow": {
+        "kind": "neutral",
+        "opacity": 0.5
+      },
+      "specular": true,
+      "translucency": {
+        "enabled": true,
+        "value": 0.75
+      },
+      "blur-material": 0.3
+    },
+    {
+      "layers": [
+        {
+          "glass": false,
+          "image-name": "glow.svg",
+          "name": "glow"
+        }
+      ],
+      "name": "Ambient Light",
+      "shadow": {
+        "kind": "none",
+        "opacity": 0.5
+      },
+      "specular": false,
+      "translucency": {
+        "enabled": false,
+        "value": 0.5
+      }
+    }
+  ],
+  "supported-platforms": {
+    "squares": "shared"
+  }
+}
