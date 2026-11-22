@@ -58,13 +58,13 @@ setup() {
 
   echo "Building the menu bar app..."
   local work; work=$(mktemp -d "${TMPDIR:-/tmp}/ios-ota-app.XXXXXX")
+  trap "rm -rf '$work'" EXIT                                   # also when the build fails or is interrupted
   (cd "$HERE/MenuBar" && xcodegen generate -q && xcodebuild -project iOSOTA.xcodeproj -scheme iOSOTA -configuration Release \
      -derivedDataPath "$work" build -quiet)
   osascript -e 'quit app "iOS OTA"' 2>/dev/null || true
   sleep 1
   rm -rf "$APP"
   cp -R "$work/Build/Products/Release/iOS OTA.app" "$APP"
-  rm -rf "$work"
   ln -sf "$HERE/ios-ota" "$HOME/.local/bin/ios-ota"
   ensure_server
   echo "Installed $APP; serving https://$(host):$PORT/"
