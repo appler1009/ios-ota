@@ -95,7 +95,7 @@ enum Pages {
       .details td { padding: 12px 0; border-bottom: 0.5px solid rgba(128, 128, 128, 0.3); vertical-align: top; }
       .details tr:last-child td { border-bottom: none; }
       .details td.k { color: var(--dim); padding-right: 16px; white-space: nowrap; }
-      .details td.v { text-align: right; word-break: break-word; }
+      .details td.v { text-align: right; word-break: break-word; font: 15px ui-monospace, "SF Mono", Menlo, monospace; }
     </style>
     """
 }
