@@ -2,7 +2,7 @@ name: iOSOTA
 options:
   bundleIdPrefix: com.appler
   deploymentTarget:
-    macOS: "14.0"
+    macOS: "15.0"           # App Intents' dependencies and Spotlight indexing of app entities
 settings:
   base:
     SWIFT_VERSION: "5.0"
