@@ -1,3 +1,4 @@
+import AppIntents
 import AppKit
 import ServiceManagement
 import SwiftUI
@@ -22,7 +23,11 @@ struct IOSOTAApp: App {
             UserDefaults.standard.set(true, forKey: "loginItemOffered")
             try? SMAppService.mainApp.register()
         }
-        menu = MenuController(store: Store())
+        let store = Store(), menu = MenuController(store: store)
+        self.menu = menu
+        // What the App Intents (Intents.swift) act through, when Siri, Spotlight or Shortcuts run one.
+        AppDependencyManager.shared.add(dependency: store)
+        AppDependencyManager.shared.add(dependency: menu)
     }
 }
 
@@ -146,10 +151,8 @@ struct IOSOTAApp: App {
         return i
     }
 
-    /// The smaller grey second line of a menu item (macOS 14.4 and later; before that, the same text after the title).
-    private func subtitle(_ item: NSMenuItem, _ text: String) {
-        if #available(macOS 14.4, *) { item.subtitle = text } else { item.title += " \u{00B7} " + text }
-    }
+    /// The smaller grey second line of a menu item.
+    private func subtitle(_ item: NSMenuItem, _ text: String) { item.subtitle = text }
 
     /// macOS 27 hides menu item images by default; this item's image is meant to be seen.
     private func showImage(_ item: NSMenuItem) {
@@ -161,7 +164,7 @@ struct IOSOTAApp: App {
         NSPasteboard.general.setString(s, forType: .string)
     }
 
-    private func showQR(_ text: String) {
+    func showQR(_ text: String) {
         let w = NSWindow(contentViewController: NSHostingController(rootView: QRWindow(text: text)))
         w.title = "Install on iPhone"
         w.styleMask = [.titled, .closable]

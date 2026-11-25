@@ -64,7 +64,8 @@ struct PublishedApp: Identifiable {
     }
 
     var pageURL: URL? { host.map { URL(string: "https://\($0):\(Self.tailnetPort)/")! } }
-    func pageURL(_ app: PublishedApp) -> URL? { host.map { URL(string: "https://\($0):\(Self.tailnetPort)/\(app.key)/")! } }
+    func pageURL(_ app: PublishedApp) -> URL? { pageURL(key: app.key) }
+    func pageURL(key: String) -> URL? { host.map { URL(string: "https://\($0):\(Self.tailnetPort)/\(key)/")! } }
 
     /// An app's folder and address: the first 12 hex digits of the SHA-256 of its bundle id, as `ios-ota publish` names it,
     /// so the bundle id is not in any address.
@@ -117,6 +118,10 @@ struct PublishedApp: Identifiable {
         if let known, notify {
             for b in found.flatMap(\.builds) where !known.contains(b.id) { announce(b) }
         }
+        if ids != known {
+            let keys = Set(found.map(\.key))
+            Self.index(found, removed: known == nil ? nil : apps.map(\.key).filter { !keys.contains($0) })
+        }
         known = ids
         apps = found
     }
@@ -160,7 +165,8 @@ struct PublishedApp: Identifiable {
         scan()
     }
 
-    func folder(_ b: Build) -> URL { Self.root.appendingPathComponent(Self.key(b.bundle)).appendingPathComponent(b.id) }
+    func folder(_ b: Build) -> URL { Self.folder(b) }
+    nonisolated static func folder(_ b: Build) -> URL { root.appendingPathComponent(key(b.bundle)).appendingPathComponent(b.id) }
 
     /// The app's icon at menu size, from its newest build that has one, with rounded corners as the iPhone shows it (the
     /// file is a full square). Drawn at the screen's resolution, so the edges stay smooth.
